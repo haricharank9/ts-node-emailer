@@ -1,0 +1,26 @@
+{
+  "name": "sender",
+  "version": "1.0.0",
+  "description": "Typescript NodeJs Emailer Lambda",
+  "main": "index.ts",
+  "scripts": {
+    "build:ts": "tsc",
+    "local": "serverless offline",
+    "deploy": "serverless deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Typescript",
+    "NodeJs",
+    "Lambda",
+    "AWS",
+    "Nodemailer",
+    "SAM"
+  ],
+  "author": "HARI CHARAN K.",
+  "license": "MIT",
+  "dependencies": {
+    "aws-lambda": "^1.0.6",
+    "nodemailer": "^6.5.0"
+  }
+}

@@ -1,0 +1,425 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: emailer-service
+configValidationMode: error
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: "2"
+
+plugins:
+  - serverless-plugin-reducer
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  lambdaHashingVersion: 20201221
+  memorySize: 512 # Overwrite the default memory size. Default is 1024
+  timeout: 20 # The default is 6
+
+  # you can overwrite defaults here
+  stage: dev
+  region: us-east-1
+
+  # you can add statements to the Lambda function's IAM Role here
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogStream
+            - logs:CreateLogGroup
+          Resource:
+            - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:service}-dev*:*
+        - Effect: Allow
+          Action:
+            - logs:PutLogEvents
+          Resource:
+            - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:service}-dev*:*:*
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+  patterns:
+    - "!**.ts"
+    - "!**/**.ts"
+    - "!tsconfig.json"
+  individually: true
+  #  include:
+  #    - include-me.js
+  #    - include-me-dir/**
+
+functions:
+  sender:
+    # plugins:
+    #   - serverless-plugin-typescript
+    handler: functions/sender/handler.senderFunction
+    name: "${self:service}-sender-${self:provider.stage}"
+    package:
+      patterns:
+        - "!functions/builder"
+        - "!functions/scheduler"
+    description: "Lambda function for sending emails"
+    role: "IamRoleNodeMailerSenderLambda"
+    #    The following are a few example events you can configure
+    #    NOTE: Please make sure to change your handler code to work with those events
+    #    Check the event documentation for details
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [NodeMailerSenderQueueTemplate, Arn]
+          batchSize: 5
+          maximumBatchingWindow: 20
+      - httpApi:
+          path: /mailer/sender
+          method: get
+  builder:
+    handler: functions/builder/handler.builderFunction
+    name: "${self:service}-builder-${self:provider.stage}"
+    package:
+      patterns:
+        - "!functions/sender"
+        - "!functions/scheduler"
+    description: "Lambda function for building email templates"
+    role: "IamRoleNodeMailerBuilderLambda"
+
+    #    The following are a few example events you can configure
+    #    NOTE: Please make sure to change your handler code to work with those events
+    #    Check the event documentation for details
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [NodeMailerBuilderQueueTemplate, Arn]
+          batchSize: 5
+          maximumBatchingWindow: 20
+      - httpApi:
+          path: /mailer/builder
+          method: get
+  scheduler:
+    handler: functions/scheduler/handler.scheduler_function
+    name: "${self:service}-scheduler-${self:provider.stage}"
+    package:
+      patterns:
+        - "!functions/sender"
+        - "!functions/builder"
+        - "!node_modules/**"
+        - "!package.json"
+        - "!package-lock.json"
+    description: "Lambda function for scheduling emails"
+    role: "IamRoleNodeMailerSenderLambda"
+    runtime: python3.7
+    #    The following are a few example events you can configure
+    #    NOTE: Please make sure to change your handler code to work with those events
+    #    Check the event documentation for details
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [NodeMailerSenderQueueTemplate, Arn]
+          batchSize: 5
+          maximumBatchingWindow: 20
+      - httpApi:
+          path: /mailer/scheduler
+          method: get
+      - sns:
+          arn:
+            Fn::GetAtt: [NodeMailerSNSTopicTemplate, Arn]
+      #      - websocket: $connect
+      #      - s3: ${env:BUCKET}
+      #      - schedule: rate(10 minutes)
+
+  #      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+  #      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+  #      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+  #      - iot:
+  #          sql: "SELECT * FROM 'some_topic'"
+  #      - cloudwatchEvent:
+  #          event:
+  #            source:
+  #              - "aws.ec2"
+  #            detail-type:
+  #              - "EC2 Instance State-change Notification"
+  #            detail:
+  #              state:
+  #                - pending
+  #      - cloudwatchLog: '/aws/lambda/hello'
+  #      - cognitoUserPool:
+  #          pool: MyUserPool
+  #          trigger: PreSignUp
+  #      - alb:
+  #          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+  #          priority: 1
+  #          conditions:
+  #            host: example.com
+  #            path: /hello
+
+  #    Define function environment variables here
+  #    environment:
+  #      variable2: value2
+
+  # you can add CloudFormation resource templates here
+resources:
+  Resources:
+    # Builder Lambda Resources CloudFormation Template
+
+    IamRoleNodeMailerBuilderLambda:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/emailer/builder/"
+        RoleName:
+          Fn::Join:
+            - "-"
+            - - ${self:service}-builder-${self:provider.stage}
+              - Ref: AWS::Region
+              - lambdaRole
+        Description: "IAM Role for Email Template Builder Lambda"
+        Policies:
+          - PolicyName: ${self:service}-builder-${self:provider.stage}-lambda
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "sqs:ChangeMessageVisibility"
+                    - "sqs:ChangeMessageVisibilityBatch"
+                    - "sqs:DeleteMessage"
+                    - "sqs:DeleteMessageBatch"
+                    - "sqs:GetQueueAttributes"
+                    - "sqs:GetQueueUrl"
+                    - "sqs:ReceiveMessage"
+                    - "sqs:SendMessage"
+                    - "sqs:SendMessageBatch"
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerBuilderQueueTemplate, Arn]
+                - Effect: Allow
+                  Action:
+                    - "sqs:GetQueueAttributes"
+                    - "sqs:GetQueueUrl"
+                    - "sqs:ReceiveMessage"
+                    - "sqs:SendMessage"
+                    - "sqs:SendMessageBatch"
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerBuilderDLQueueTemplate, Arn]
+                - Effect: Allow
+                  Action:
+                    - "sqs:GetQueueAttributes"
+                    - "sqs:GetQueueUrl"
+                    - "sqs:SendMessage"
+                    - "sqs:SendMessageBatch"
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerSenderQueueTemplate, Arn]
+                # - Effect: Allow
+                #   Action:
+                #     - "s3:GetObject"
+                #     - "s3:GetObjectVersion"
+                #   Resource: "arn:aws:s3:::awsexamplebucket1/Alice/*"
+    NodeMailerBuilderQueueTemplate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:service}-builder-app-queue"
+        DelaySeconds: 0
+        MaximumMessageSize: 262144
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        VisibilityTimeout: 170
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [NodeMailerBuilderDLQueueTemplate, Arn]
+          maxReceiveCount: 2
+    NodeMailerBuilderDLQueueTemplate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:service}-builder-dd-ltr-queue"
+        DelaySeconds: 0
+        MaximumMessageSize: 262144
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        VisibilityTimeout: 170
+
+    # Sender Lambda Resources CloudFormation Template
+
+    IamRoleNodeMailerSenderLambda:
+      Type: "AWS::IAM::Role"
+      Properties:
+        Path: "/emailer/sender/"
+        Description: "IAM Role for Email Sender Lambda"
+        RoleName:
+          Fn::Join:
+            - "-"
+            - - ${self:service}-sender-${self:provider.stage}
+              - Ref: AWS::Region
+              - lambdaRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-sender-${self:provider.stage}-lambda
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "sqs:ChangeMessageVisibility"
+                    - "sqs:ChangeMessageVisibilityBatch"
+                    - "sqs:DeleteMessage"
+                    - "sqs:DeleteMessageBatch"
+                    - "sqs:GetQueueAttributes"
+                    - "sqs:GetQueueUrl"
+                    - "sqs:ReceiveMessage"
+                    - "sqs:SendMessage"
+                    - "sqs:SendMessageBatch"
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerSenderQueueTemplate, Arn]
+                - Effect: Allow
+                  Action:
+                    - "sqs:GetQueueAttributes"
+                    - "sqs:GetQueueUrl"
+                    - "sqs:ReceiveMessage"
+                    - "sqs:SendMessage"
+                    - "sqs:SendMessageBatch"
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerSenderDLQueueTemplate, Arn]
+    NodeMailerSenderQueueTemplate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:service}-sender-app-queue"
+        DelaySeconds: 0
+        MaximumMessageSize: 262144
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        VisibilityTimeout: 170
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [NodeMailerSenderDLQueueTemplate, Arn]
+          maxReceiveCount: 2
+    NodeMailerSenderDLQueueTemplate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:service}-sender-dd-ltr-queue"
+        DelaySeconds: 0
+        MaximumMessageSize: 262144
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        VisibilityTimeout: 170
+
+    # Scheduler Lambda Resource CloudFormation Template
+
+    IAMRoleEmailServiceSchedulerLambda:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: "/emailer/sender/"
+        Description: "IAM Role for Email Scheduler Lambda"
+        RoleName:
+          Fn::Join:
+            - "-"
+            - - ${self:service}-sender-${self:provider.stage}
+              - Ref: AWS::Region
+              - lambdaRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-scheduler-${self:provider.stage}-lambda
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - sns:Publish
+                  Resource:
+                    - Fn::GetAtt: [NodeMailerSNSTopicTemplate, Arn]
+
+    NodeMailerSNSTopicTemplate:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: "${self:service}-raptor-sns-topic"
+        # - Endpoint:
+        #     Fn::GetAtt:
+        #     - MyQueue1
+        #     - Arn
+        #   Protocol: sqs
+        # - Endpoint:
+        #     Fn::GetAtt:
+        #     - MyQueue2
+        #     - Arn
+        #   Protocol: sqs
+    NodeMailerSNSTopicDLQTemplate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:service}-sns-dd-ltr-queue"
+        DelaySeconds: 0
+        MaximumMessageSize: 262144
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        VisibilityTimeout: 170
+    NodeMailerSNSTopicDLQPolicyTemplate:
+      Type: "AWS::SQS::QueuePolicy"
+      Properties:
+        Queues:
+          - Fn::GetAtt: [NodeMailerSNSTopicDLQTemplate, Arn]
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action: SQS:SendMessage
+              Resource:
+                Fn::GetAtt: [NodeMailerSNSTopicDLQTemplate, Arn]
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    Fn::GetAtt: [NodeMailerSNSTopicTemplate, Arn]
+    NodeMailerSNSTopicSubscriptionTemplate:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: lambda
+        Endpoint:
+          "arn:business-logic-lambda"
+          # Fn::GetAtt: [NodeMailerSNSTopicDLQTemplate, Arn]
+        TopicArn:
+          Fn::GetAtt: [NodeMailerSNSTopicTemplate, Arn]
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [NodeMailerSNSTopicDLQTemplate, Arn]
+
+        #  Outputs:
+
+        #     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
